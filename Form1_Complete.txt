@@ -1,0 +1,214 @@
+using MQTTnet;
+using MQTTnet.Client;
+using MQTTnet.Protocol;
+
+namespace c__mqtt_test
+{
+    public partial class Form1 : Form
+    {
+        private IMqttClient? mqttClient;
+        private MqttFactory? mqttFactory;
+
+        public Form1()
+        {
+            InitializeComponent();
+            InitializeEventHandlers();
+            InitializeMqtt();
+            InitializeButtonStates();
+        }
+
+        private void InitializeEventHandlers()
+        {
+            button_connect.Click += Button_connect_Click;
+            button_disconnect.Click += Button_disconnect_Click;
+            button_confirm1.Click += Button_confirm1_Click;
+            button_exit.Click += Button_exit_Click;
+            this.FormClosing += Form1_FormClosing;
+        }
+
+        private void InitializeMqtt()
+        {
+            mqttFactory = new MqttFactory();
+            mqttClient = mqttFactory.CreateMqttClient();
+            mqttClient.ApplicationMessageReceivedAsync += MqttClient_ApplicationMessageReceivedAsync;
+        }
+
+        private void InitializeButtonStates()
+        {
+            button_disconnect.Enabled = false;
+            button_confirm1.Enabled = false;
+        }
+
+        private async void Button_connect_Click(object? sender, EventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(textBox_serverIP.Text))
+            {
+                MessageBox.Show("請輸入 MQTT Server IP 位址", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            try
+            {
+                button_connect.Enabled = false;
+
+                var options = new MqttClientOptionsBuilder()
+                    .WithTcpServer(textBox_serverIP.Text, 1883)
+                    .WithClientId(Guid.NewGuid().ToString())
+                    .WithCleanSession()
+                    .Build();
+
+                var response = await mqttClient!.ConnectAsync(options, CancellationToken.None);
+
+                if (response.ResultCode == MqttClientConnectResultCode.Success)
+                {
+                    MessageBox.Show("已完成連線", "連線成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    button_disconnect.Enabled = true;
+                    button_confirm1.Enabled = true;
+                    textBox_serverIP.Enabled = false;
+                }
+                else
+                {
+                    MessageBox.Show($"連線失敗：{response.ResultCode}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    button_connect.Enabled = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"連線錯誤：{ex.Message}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                button_connect.Enabled = true;
+            }
+        }
+
+        private async void Button_disconnect_Click(object? sender, EventArgs e)
+        {
+            DialogResult result = MessageBox.Show(
+                "確定要斷開 MQTT 連線嗎？",
+                "確認斷線",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+
+            if (result == DialogResult.No)
+            {
+                return;
+            }
+
+            try
+            {
+                if (mqttClient != null && mqttClient.IsConnected)
+                {
+                    await mqttClient.DisconnectAsync();
+                    MessageBox.Show("已斷開 MQTT 連線", "斷線完成", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+
+                button_connect.Enabled = true;
+                button_disconnect.Enabled = false;
+                button_confirm1.Enabled = false;
+                textBox_serverIP.Enabled = true;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"斷線錯誤：{ex.Message}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private async void Button_confirm1_Click(object? sender, EventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(textBox_topic1.Text))
+            {
+                MessageBox.Show("請輸入訂閱主題", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            try
+            {
+                if (mqttClient == null || !mqttClient.IsConnected)
+                {
+                    MessageBox.Show("請先連線到 MQTT Server", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                var subscribeOptions = mqttFactory!.CreateSubscribeOptionsBuilder()
+                    .WithTopicFilter(f => f.WithTopic(textBox_topic1.Text).WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce))
+                    .Build();
+
+                await mqttClient.SubscribeAsync(subscribeOptions, CancellationToken.None);
+
+                AppendText(richTextBox_Sub_topic1, $"[{DateTime.Now:HH:mm:ss}] 已訂閱主題：{textBox_topic1.Text}\r\n");
+                MessageBox.Show($"成功訂閱主題：{textBox_topic1.Text}", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"訂閱錯誤：{ex.Message}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private Task MqttClient_ApplicationMessageReceivedAsync(MqttApplicationMessageReceivedEventArgs e)
+        {
+            try
+            {
+                string topic = e.ApplicationMessage.Topic;
+                string payload = System.Text.Encoding.UTF8.GetString(e.ApplicationMessage.PayloadSegment);
+
+                this.Invoke(() =>
+                {
+                    if (topic == textBox_topic1.Text)
+                    {
+                        AppendText(richTextBox_Sub_topic1, $"[{DateTime.Now:HH:mm:ss}] {payload}\r\n");
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                this.Invoke(() =>
+                {
+                    MessageBox.Show($"接收訊息錯誤：{ex.Message}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                });
+            }
+
+            return Task.CompletedTask;
+        }
+
+        private void AppendText(RichTextBox rtb, string text)
+        {
+            rtb.AppendText(text);
+            rtb.ScrollToCaret();
+        }
+
+        private async void Button_exit_Click(object? sender, EventArgs e)
+        {
+            await CleanupResources();
+            Application.Exit();
+        }
+
+        private async void Form1_FormClosing(object? sender, FormClosingEventArgs e)
+        {
+            await CleanupResources();
+        }
+
+        private async Task CleanupResources()
+        {
+            try
+            {
+                if (mqttClient != null && mqttClient.IsConnected)
+                {
+                    await mqttClient.DisconnectAsync();
+                }
+                
+                mqttClient?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"清理資源時發生錯誤：{ex.Message}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                components?.Dispose();
+            }
+            base.Dispose(disposing);
+        }
+    }
+}
