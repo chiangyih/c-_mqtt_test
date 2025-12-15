@@ -1,0 +1,96 @@
+
+        #region 發布訊息
+
+        /// <summary>設定發布主題按鈕點擊事件處理</summary>
+        private void Pub_bt1_Click(object? sender, EventArgs e)
+        {
+            if (!ValidatePublishTopicInput())
+                return;
+
+            currentPublishTopic = pub_topic1.Text;
+            MessageBox.Show(
+                $"已設定發布主題：{currentPublishTopic}",
+                "成功",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+
+        /// <summary>驗證發布主題輸入</summary>
+        /// <returns>輸入是否有效</returns>
+        private bool ValidatePublishTopicInput()
+        {
+            if (string.IsNullOrWhiteSpace(pub_topic1.Text))
+            {
+                MessageBox.Show(
+                    "請輸入發布主題",
+                    "錯誤",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>LED 開關按鈕點擊事件處理</summary>
+        private async void LED_sw_Click(object? sender, EventArgs e)
+        {
+            // 驗證是否已設定發布主題
+            if (string.IsNullOrWhiteSpace(currentPublishTopic))
+            {
+                MessageBox.Show(
+                    "請先設定發布主題",
+                    "錯誤",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            // 驗證連線
+            if (!ValidateConnection())
+                return;
+
+            try
+            {
+                // 切換 LED 狀態
+                isLedOn = !isLedOn;
+                
+                // 發布訊息
+                string message = isLedOn ? "ON" : "OFF";
+                await PublishMessage(currentPublishTopic, message);
+                
+                // 更新按鈕顏色
+                LED_sw.BackColor = isLedOn ? Color.Red : Color.Gray;
+            }
+            catch (Exception ex)
+            {
+                HandlePublishError(ex);
+            }
+        }
+
+        /// <summary>發布訊息到 MQTT Broker</summary>
+        /// <param name="topic">主題</param>
+        /// <param name="payload">訊息內容</param>
+        private async Task PublishMessage(string topic, string payload)
+        {
+            var message = new MqttApplicationMessageBuilder()
+                .WithTopic(topic)
+                .WithPayload(payload)
+                .WithQualityOfServiceLevel(MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce)
+                .Build();
+
+            await mqttClient!.PublishAsync(message, CancellationToken.None);
+        }
+
+        /// <summary>處理發布錯誤</summary>
+        /// <param name="ex">異常物件</param>
+        private void HandlePublishError(Exception ex)
+        {
+            MessageBox.Show(
+                $"發布訊息錯誤：{ex.Message}",
+                "錯誤",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
+
+        #endregion
+
